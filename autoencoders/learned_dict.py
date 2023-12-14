@@ -163,7 +163,7 @@ class AnthropicSAE(LearnedDict):
         return x_hat + self.shift_bias
 
 class TransferSAE(LearnedDict):
-    def __init__(self, autoencoder, decoder, decoder_bias=None, mode="free"):
+    def __init__(self, autoencoder, decoder, decoder_bias=None, scale=None, mode="free"):
         """
         mode: "scale" (only train a scaling factor), 
         "rotation" (only train a direction), 
@@ -179,13 +179,15 @@ class TransferSAE(LearnedDict):
         
         self.decoder = decoder
         
-        self.scale = torch.ones_like(self.encoder_bias)
-        
         if decoder_bias is None:
             self.decoder_bias = autoencoder.shift_bias
         else:
             self.decoder_bias = decoder_bias
         
+        if scale is None:
+            self.scale = torch.ones_like(self.encoder_bias)
+        else:
+            self.scale = scale
 
     def get_learned_dict(self):
         norms = torch.norm(self.decoder, 2, dim=-1)

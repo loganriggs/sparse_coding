@@ -165,9 +165,9 @@ class AnthropicSAE(LearnedDict):
 class TransferSAE(LearnedDict):
     def __init__(self, autoencoder, decoder, decoder_bias=None, scale=None, mode="free"):
         """
-        mode: "scale" (only train a scaling factor), 
-        "rotation" (only train a direction), 
-        "bias" (just train bias),
+        mode: "scale" (restrict scaling factor), 
+        "rotation" (restrict rotations of dictionary), 
+        "bias" (restrict bias shift),
         "free" (train everything), 
         """
         assert mode in ["scale", "rotation", "bias", "free"], "mode not of right type"
@@ -208,23 +208,21 @@ class TransferSAE(LearnedDict):
         self.encoder_bias.requires_grad = False
         self.shift_bias.requires_grad = False
         
-        self.decoder.requires_grad = False
-        self.decoder_bias.requires_grad = False
-        self.scale.requires_grad = False
+        self.decoder.requires_grad = True
+        self.decoder_bias.requires_grad = True
+        self.scale.requires_grad = True
 
         if self.mode=="scale":
-            self.scale.requires_grad = True
+            self.scale.requires_grad = False
 
         if self.mode=="rotation":
-            self.decoder.requires_grad=True
+            self.decoder.requires_grad=False
 
         if self.mode=="bias":
-            self.decoder_bias.requires_grad=True
+            self.decoder_bias.requires_grad=False
 
-        if self.mode=="free":
-            self.decoder.requires_grad = True
-            self.decoder_bias.requires_grad = True
-            self.scale.requires_grad = True
+        if self.mode=="free": # we don't freeze anything if "free"
+            pass
         
     
     def parameters(self):

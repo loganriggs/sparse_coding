@@ -132,7 +132,10 @@ def make_sentence_dataset(dataset_name: str, max_lines: int = 20_000, start_line
                 os.system("unzstd pile0.zst")
         dataset = Dataset.from_list(list(read_from_pile("pile0", max_lines=max_lines, start_line=start_line)))
     else:
-        dataset = load_dataset(dataset_name, split=split)#, split=f"train[{start_line}:{start_line + max_lines}]")
+        if max_lines is None:
+            dataset = load_dataset(dataset_name, split=split)#, split=f"train[{start_line}:{start_line + max_lines}]")
+        else:
+            dataset = load_dataset(dataset_name, split=f"{split}[{start_line}:{start_line + max_lines}]")
     return dataset
 
 
@@ -461,8 +464,8 @@ def setup_data(
         return n_datapoints
 
 
-def setup_token_data(cfg, tokenizer, model, seed=1, split="train"):
-    sentence_dataset = make_sentence_dataset(cfg.dataset_name, split=split)
+def setup_token_data(cfg, tokenizer, model, seed=1, split="train", max_lines=None):
+    sentence_dataset = make_sentence_dataset(cfg.dataset_name, split=split, max_lines=max_lines)
     tokenized_sentence_dataset, bits_per_byte = chunk_and_tokenize(sentence_dataset, tokenizer, max_length=cfg.max_length)
 
     random.seed(seed)

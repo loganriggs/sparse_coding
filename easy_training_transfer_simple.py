@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[ ]:
+# In[2]:
 
 
 import torch 
@@ -17,30 +17,31 @@ import matplotlib.pyplot as plt
 
 cfg = dotdict()
 # models: "EleutherAI/pythia-6.9b", "usvsnsp/pythia-6.9b-ppo", "lomahony/eleuther-pythia6.9b-hh-sft", "reciprocate/dahoas-gptj-rm-static"
-# "EleutherAI/pythia-70m", "lomahony/eleuther-pythia70m-hh-sft"
+# "EleutherAI/pythia-70m", "lomahony/eleuther-pythia70m-hh-sft", "BlueSunflower/Pythia-70M-chess"
 cfg.model_name="EleutherAI/pythia-70m"
-cfg.target_name="lomahony/eleuther-pythia70m-hh-sft"
+cfg.target_name="lomahony/eleuther-pythia70m-hh-sft" #"BlueSunflower/Pythia-70M-chess"
 cfg.layers=[0,1,2,3,4,5]
 cfg.setting="residual"
 # cfg.tensor_name="gpt_neox.layers.{layer}"
 cfg.tensor_name="gpt_neox.layers.{layer}" # "gpt_neox.layers.{layer}" (pythia), "transformer.h.{layer}" (rm)
 cfg.target_tensor_name="gpt_neox.layers.{layer}"
-original_l1_alpha = 8e-4
+original_l1_alpha = 2e-3
 cfg.l1_alpha=original_l1_alpha
-cfg.l1_alphas=[0, 1e-5, 2e-5, 4e-5, 8e-5, 1e-4, 2e-4, 4e-4, 8e-4, 1e-3, 2e-3, 4e-3, 8e-3]
-# cfg.l1_alphas=[0, 1e-5, 1e-4, 2e-4, 4e-4, 8e-4, 1e-3, 2e-3, 4e-3, 8e-3]
+cfg.l1_alphas=[1e-3, 2e-3, 4e-3, 8e-3]
+# cfg.l1_alphas=[0, 1e-5, 2e-5, 4e-5, 8e-5, 1e-4, 2e-4, 4e-4, 8e-4, 1e-3, 2e-3, 4e-3, 8e-3]
 cfg.sparsity=None
 cfg.num_epochs=10
 cfg.model_batch_size=8 * 8
-cfg.lr=1e-3
+cfg.lr=1e-2
 cfg.kl=False
 cfg.reconstruction=False
-# cfg.dataset_name="NeelNanda/pile-10k"
-cfg.dataset_name="Elriggs/openwebtext-100k"
+# cfg.dataset_name="NeelNanda/pile-10k", "BlueSunflower/ChessGames", "Elriggs/openwebtext-100k"
+cfg.dataset_name="Elriggs/openwebtext-100k" #"BlueSunflower/ChessGames"
 cfg.device="cuda:0"
 cfg.ratio = 4
 cfg.seed = 0
 cfg.max_length = 256
+cfg.dataset_lines = None #300_000 # number of lines to download from dataset 300k for 100m tokens
 # cfg.device="cpu"
 
 
@@ -67,7 +68,7 @@ tokenizer = AutoTokenizer.from_pretrained(cfg.model_name)
 
 # Download the dataset
 # TODO iteratively grab dataset?
-token_loader = setup_token_data(cfg, tokenizer, model, seed=cfg.seed)
+token_loader = setup_token_data(cfg, tokenizer, model, seed=cfg.seed, max_lines=cfg.dataset_lines) #cfg.dataset_lines
 num_tokens = cfg.max_length*cfg.model_batch_size*len(token_loader)
 print(f"Number of tokens: {num_tokens}")
 
@@ -78,7 +79,7 @@ print(f"Number of tokens: {num_tokens}")
 # Run 1 datapoint on model to get the activation size
 from baukit import Trace, TraceDict
 
-text = "1"
+text = "hi buddy"
 tokens = tokenizer(text, return_tensors="pt").input_ids.to(cfg.device)
 # Your activation name will be different. In the next cells, we will show you how to find it.
 with torch.no_grad():
@@ -90,6 +91,13 @@ with torch.no_grad():
             representation = representation[0]
         activation_size = representation.shape[-1]
 print(f"Activation size: {activation_size}")
+
+
+# In[ ]:
+
+
+# torch.nn.functional.cosine_similarity(representation, target_representation, dim=-1)
+# torch.nn.functional.cosine_similarity(other_representation, target_representation, dim=-1)
 
 
 # In[ ]:
@@ -128,21 +136,19 @@ def autoencoder_name_from_llm_name(llm_name, layer, l1_alpha):
     return f"base_sae_70m_{layer}_{l1_alpha}"
     # return f"{model_save_name}_{layer}_{l1_alpha}"
     
-def autoTED_name_from_llm_name(llm_name, layer, l1_alpha):
-    if llm_name == "EleutherAI/pythia-6.9b":
-        return "base_autoTED_6b"
+def autoTED_name_from_llm_name(llm_name, mode, layer, l1_alpha):
+    # if llm_name == "EleutherAI/pythia-6.9b":
+    #     return "base_autoTED_6b"
     if llm_name == "EleutherAI/pythia-70m":
-        model_save_name = llm_name.split("/")[-1]
-        return f"{model_save_name}_autoTED_{layer}_{l1_alpha}" 
-        # return "base_autoTED_70m"
-    if llm_name == "lomahony/eleuther-pythia6.9b-hh-sft":
-        return "sft_autoTED_6b"
-    if llm_name == "lomahony/eleuther-pythia70m-hh-sft":
-        return "sft_autoTED_70m"
-    if llm_name == "usvsnsp/pythia-6.9b-ppo":
-        return "ppo_autoTED_6b"
-    if llm_name == "reciprocate/dahoas-gptj-rm-static":
-        return "rm_autoTED_gptj"
+        return f"base_autoTED_70m/base_autoTED_70m_{mode}_{layer}_{l1_alpha}"
+    # if llm_name == "lomahony/eleuther-pythia6.9b-hh-sft":
+    #     return "sft_autoTED_6b"
+    # if llm_name == "lomahony/eleuther-pythia70m-hh-sft":
+    #     return "sft_autoTED_70m"
+    # if llm_name == "usvsnsp/pythia-6.9b-ppo":
+    #     return "ppo_autoTED_6b"
+    # if llm_name == "reciprocate/dahoas-gptj-rm-static":
+    #     return "rm_autoTED_gptj"
     return "Error"
 
 
@@ -154,21 +160,25 @@ from autoencoders.learned_dict import TiedSAE, UntiedSAE, AnthropicSAE, Transfer
 from torch import nn
 
 model_save_name = cfg.model_name.split("/")[-1]
-print(f"Loading autoencoder from model {model_save_name}")
+print(f"Loading autoTEDs from model {model_save_name}")
 
 
-
-autoencoders = []
+modes = ["scale", "rotation", "bias", "free"]
+autoTEDs = []
 for layer in cfg.layers:
     l1_variants = []
     
     for l1 in cfg.l1_alphas:
-        save_name = autoTED_name_from_llm_name(cfg.model_name, layer, l1)
-        autoencoder = torch.load(f"trained_models/{save_name}.pt")
-        autoencoder.to_device(cfg.device)
-        l1_variants.append(autoencoder)
+        mode_autoTEDS = []
+        for mode in modes:
+            save_name = autoTED_name_from_llm_name(cfg.model_name, mode, layer, l1)
+            autoencoder = torch.load(f"trained_models/{save_name}.pt")
+            autoencoder.to_device(cfg.device)
+            mode_autoTEDS.append(autoencoder)
+            
+        l1_variants.append(mode_autoTEDS)
         
-    autoencoders.append(l1_variants)
+    autoTEDs.append(l1_variants)
 
 
 # In[ ]:
@@ -178,7 +188,7 @@ for layer in cfg.layers:
 from autoencoders.learned_dict import TiedSAE, UntiedSAE, AnthropicSAE, TransferSAE
 from torch import nn
 
-modes = ["scale", "rotation", "bias", "free"]
+# modes = ["scale", "rotation", "bias", "free"]
 transfer_autoencoders = []
 optimizers = []
 for layer in cfg.layers:
@@ -186,11 +196,11 @@ for layer in cfg.layers:
     l1_optimizers = []
     
     for l1 in range(len(cfg.l1_alphas)):
-        autoencoder = autoencoders[layer][l1]
         
         mode_tsaes = []
         mode_opts = []
-        for mode in modes:
+        for mode_id, mode in enumerate(modes):
+            autoencoder = autoTEDs[layer][l1][mode_id]
             mode_tsae = TransferSAE(
                 # n_feats = n_dict_components, 
                 # activation_size=activation_size,
@@ -198,7 +208,7 @@ for layer in cfg.layers:
                 decoder=autoencoder.get_learned_dict().detach().clone(),
                 decoder_bias=autoencoder.shift_bias.detach().clone(),
                 scale=autoencoder.scale.detach().clone(),
-                mode="free",
+                mode=mode,
             )
             mode_tsae.set_grad()
             mode_tsaes.append(mode_tsae)
@@ -210,6 +220,9 @@ for layer in cfg.layers:
         l1_optimizers.append(mode_opts)
     transfer_autoencoders.append(l1_variants)
     optimizers.append(l1_optimizers)
+
+# reset autoencoders list to just include free autoTEDs
+autoencoders = [[autoTEDs[layer][l1][-1] for l1 in range(len(cfg.l1_alphas))] for layer in cfg.layers ]
 
 
 # In[ ]:
@@ -282,15 +295,19 @@ def training_step(autoencoder, base_activation, target_activation, transfer_auto
         
         # wandb.log(wandb_log)
     
-    return wandb_log, dead_features #, last_decoders
+    binary_activations = (c != 0).sum(dim=0).cpu().detach()
+    return wandb_log, dead_features, binary_activations
 
 
 # In[ ]:
 
 
 # Training transfer autoencoder
-token_loader = setup_token_data(cfg, tokenizer, model, seed=cfg.seed)
+# token_loader = setup_token_data(cfg, tokenizer, model, seed=cfg.seed, max_lines=cfg.dataset_lines)
 dead_features = [[torch.zeros(autoencoder.encoder.shape[0])
+                         for l1 in cfg.l1_alphas]
+                         for layer in range(len(tensor_names))]
+frequency = [[torch.zeros(autoencoder.encoder.shape[0])
                          for l1 in cfg.l1_alphas]
                          for layer in range(len(tensor_names))]
 # auto_dead_features = torch.zeros(autoencoder.encoder.shape[0])
@@ -313,7 +330,8 @@ num_saved_so_far = 0
 print("starting loop")
 # for (base_activation, target_activation) in tqdm(generate_activations(model, token_loader, cfg, model_on_gpu=model_on_gpu, num_batches=500), 
 #                                                  total=int(max_num_tokens/(cfg.max_length*cfg.model_batch_size))):
-for i, batch in enumerate(tqdm(token_loader,total=int(max_num_tokens/(cfg.max_length*cfg.model_batch_size)))):
+tqdm_length = min(int(max_num_tokens/(cfg.max_length*cfg.model_batch_size)), len(token_loader))
+for i, batch in enumerate(tqdm(token_loader,total=tqdm_length)):
     tokens = batch["input_ids"].to(cfg.device)
     with torch.no_grad(): # As long as not doing KL divergence, don't need gradients for model       
         base_activations = []
@@ -337,11 +355,12 @@ for i, batch in enumerate(tqdm(token_loader,total=int(max_num_tokens/(cfg.max_le
     for layer in range(len(cfg.layers)):
         for l1_id in range(len(cfg.l1_alphas)):
             indiv_prefixes = [f"{layer} {cfg.l1_alphas[l1_id]} {mode} " for mode in modes]
-            wandb_logging, dead_features[layer][l1_id] = training_step(autoencoders[layer][l1_id], base_activations[layer], target_activations[layer], 
+            wandb_logging, dead_features[layer][l1_id], binary_acts = training_step(autoencoders[layer][l1_id], base_activations[layer], target_activations[layer], 
                                                                         transfer_autoencoders[layer][l1_id], optimizers[layer][l1_id], i, 
                                                                         dead_features[layer][l1_id], log_every, log_prefix=f"{layer} {cfg.l1_alphas[l1_id]} ",
                                                                         indiv_prefixes=indiv_prefixes)
             wandb_log.update(wandb_logging)
+            frequency[layer][l1_id] += binary_acts
     
     if len(wandb_log) > 0:
         wandb.log(wandb_log)
@@ -349,24 +368,24 @@ for i, batch in enumerate(tqdm(token_loader,total=int(max_num_tokens/(cfg.max_le
         
     i+=1
     
-    if ((i+2) % 1000==0): # save periodically but before big changes
-        for layer in range(len(cfg.layers)):
-            for l1_id in range(len(cfg.l1_alphas)):
-                for mode_id in range(len(modes)):
-                    mode = modes[mode_id]
-                    l1_alpha = cfg.l1_alphas[l1_id]
-                    model_save_name = cfg.model_name.split("/")[-1]
-                    save_name = f"transfer_base_sft_70m_{mode}_{layer}_{l1_alpha}_ckpt{num_saved_so_far}" 
+    # if ((i+2) % 6000==0): # save periodically but before big changes
+    #     for layer in range(len(cfg.layers)):
+    #         for l1_id in range(len(cfg.l1_alphas)):
+    #             for mode_id in range(len(modes)):
+    #                 mode = modes[mode_id]
+    #                 l1_alpha = cfg.l1_alphas[l1_id]
+    #                 model_save_name = cfg.model_name.split("/")[-1]
+    #                 save_name = f"transfer_base_sft_70m_{mode}_{layer}_{l1_alpha}_ckpt{num_saved_so_far}" 
 
-                    # Make directory trained_models if it doesn't exist
-                    import os
-                    if not os.path.exists("trained_models"):
-                        os.makedirs("trained_models")
-                    # Save model
-                    torch.save(transfer_autoencoders[layer][l1_id][mode_id], f"trained_models/{save_name}.pt")
-                    # torch.save(dead_features[layer][l1_id], f"trained_models/dead_features_{model_save_name}_{layer}_{l1_alpha}.pt")
+    #                 # Make directory trained_models if it doesn't exist
+    #                 import os
+    #                 if not os.path.exists("trained_models"):
+    #                     os.makedirs("trained_models")
+    #                 # Save model
+    #                 torch.save(transfer_autoencoders[layer][l1_id][mode_id], f"trained_models/new_transfer/{save_name}.pt")
+    #                 # torch.save(dead_features[layer][l1_id], f"trained_models/dead_features_{model_save_name}_{layer}_{l1_alpha}.pt")
         
-        num_saved_so_far += 1
+    #     num_saved_so_far += 1
                 
     
     num_tokens_so_far = i*cfg.max_length*cfg.model_batch_size
@@ -374,6 +393,9 @@ for i, batch in enumerate(tqdm(token_loader,total=int(max_num_tokens/(cfg.max_le
         print(f"Reached max number of tokens: {max_num_tokens}")
         break
     
+for layer in range(len(cfg.layers)):
+    for l1_id in range(len(cfg.l1_alphas)):
+        frequency[layer][l1_id] = frequency[layer][l1_id]/num_tokens_so_far
 
 
 # In[ ]:
@@ -394,7 +416,7 @@ for layer in range(len(cfg.layers)):
             if not os.path.exists("trained_models"):
                 os.makedirs("trained_models")
             # Save model
-            torch.save(transfer_autoencoders[layer][l1_id][mode_id], f"trained_models/{save_name}.pt")
+            torch.save(transfer_autoencoders[layer][l1_id][mode_id], f"trained_models/new_transfer/{save_name}.pt")
             # torch.save(dead_features[layer][l1_id], f"trained_models/dead_features_{model_save_name}_{layer}_{l1_alpha}.pt")
 
 

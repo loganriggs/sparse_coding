@@ -170,7 +170,7 @@ class TransferSAE(LearnedDict):
         "bias" (restrict bias shift),
         "free" (train everything), 
         """
-        assert mode in ["scale", "rotation", "bias", "free"], "mode not of right type"
+        assert mode in ["noscale", "norotation", "nobias", "free", "scale", "enorotation", "efree"], "mode not of right type"  # represents what gets frozen
         self.mode = mode
         self.encoder = autoencoder.encoder
         self.encoder_bias = autoencoder.encoder_bias
@@ -202,6 +202,7 @@ class TransferSAE(LearnedDict):
         self.encoder_bias = self.encoder_bias.to(device)
         self.shift_bias = self.shift_bias.to(device)
         self.decoder_bias = self.decoder_bias.to(device)
+        self.scale.requires_grad = self.scale.to(device)
     
     def set_grad(self):
         self.encoder.requires_grad = False
@@ -212,18 +213,37 @@ class TransferSAE(LearnedDict):
         self.decoder_bias.requires_grad = True
         self.scale.requires_grad = True
 
-        if self.mode=="scale":
+        if self.mode=="noscale":
             self.scale.requires_grad = False
 
-        if self.mode=="rotation":
+        if self.mode=="norotation":
             self.decoder.requires_grad=False
 
-        if self.mode=="bias":
+        if self.mode=="nobias":
             self.decoder_bias.requires_grad=False
 
         if self.mode=="free": # we don't freeze anything if "free"
             pass
         
+        if self.mode=="scale":            
+            self.decoder.requires_grad = False
+            self.decoder_bias.requires_grad = False
+            self.scale.requires_grad = True
+        
+        if self.mode=="enorotation":
+            self.encoder_bias.requires_grad = True
+            
+            self.decoder.requires_grad = False
+            self.decoder_bias.requires_grad = False
+            self.scale.requires_grad = True
+        
+        if self.mode=="efree":
+            self.encoder_bias.requires_grad = True
+            self.encoder.requires_grad = True
+            
+            self.decoder.requires_grad = False
+            self.decoder_bias.requires_grad = False
+            self.scale.requires_grad = True
     
     def parameters(self):
         params = []
@@ -238,13 +258,20 @@ class TransferSAE(LearnedDict):
         c = c + self.encoder_bias
         c = torch.clamp(c, min=0.0)
         return c
-    
+        
     def decode(self, code):
         learned_dict = self.get_learned_dict()
         scaled_features = code * self.scale # element-wise scale
         x_hat = torch.einsum("nd,bn->bd", learned_dict, scaled_features)
         return x_hat + self.decoder_bias
+    
+    def apply_scale(self, code):
+        return code * self.scale
 
+    def decode_post_scale(self, scaled_features):
+        learned_dict = self.get_learned_dict()
+        x_hat = torch.einsum("nd,bn->bd", learned_dict, scaled_features)
+        return x_hat + self.decoder_bias
 
 class TiedSAE(LearnedDict):
     def __init__(self, encoder, encoder_bias, norm_encoder=False):

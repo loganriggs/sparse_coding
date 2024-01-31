@@ -170,19 +170,19 @@ class TransferSAE(LearnedDict):
         "bias" (restrict bias shift),
         "free" (train everything), 
         """
-        assert mode in ["noscale", "norotation", "nobias", "free", "scale", "enorotation", "efree"], "mode not of right type"  # represents what gets frozen
+        assert mode in ["dnoscale", "dnorotation", "dnobias", "dfree", "scale", "enorotation", "efree", "norotation"], "mode not of right type"  # represents what gets frozen
         self.mode = mode
-        self.encoder = autoencoder.encoder
-        self.encoder_bias = autoencoder.encoder_bias
-        self.shift_bias = autoencoder.shift_bias
+        self.encoder = autoencoder.encoder.detach().clone()
+        self.encoder_bias = autoencoder.encoder_bias.detach().clone()
+        self.shift_bias = autoencoder.shift_bias.detach().clone()
         self.n_feats, self.activation_size = self.encoder.shape
         
-        self.decoder = decoder
+        self.decoder = decoder.detach().clone()
         
         if decoder_bias is None:
-            self.decoder_bias = autoencoder.shift_bias
+            self.decoder_bias = autoencoder.shift_bias.detach().clone()
         else:
-            self.decoder_bias = decoder_bias
+            self.decoder_bias = decoder_bias.detach().clone()
         
         if scale is None:
             self.scale = torch.ones_like(self.encoder_bias)
@@ -202,7 +202,7 @@ class TransferSAE(LearnedDict):
         self.encoder_bias = self.encoder_bias.to(device)
         self.shift_bias = self.shift_bias.to(device)
         self.decoder_bias = self.decoder_bias.to(device)
-        self.scale.requires_grad = self.scale.to(device)
+        self.scale = self.scale.to(device)
     
     def set_grad(self):
         self.encoder.requires_grad = False
@@ -213,16 +213,16 @@ class TransferSAE(LearnedDict):
         self.decoder_bias.requires_grad = True
         self.scale.requires_grad = True
 
-        if self.mode=="noscale":
+        if self.mode=="dnoscale":
             self.scale.requires_grad = False
 
-        if self.mode=="norotation":
+        if self.mode=="dnorotation":
             self.decoder.requires_grad=False
 
-        if self.mode=="nobias":
+        if self.mode=="dnobias":
             self.decoder_bias.requires_grad=False
 
-        if self.mode=="free": # we don't freeze anything if "free"
+        if self.mode=="dfree": # we don't freeze anything if "free"
             pass
         
         if self.mode=="scale":            
@@ -243,6 +243,13 @@ class TransferSAE(LearnedDict):
             
             self.decoder.requires_grad = False
             self.decoder_bias.requires_grad = False
+            self.scale.requires_grad = True
+            
+        if self.mode=="norotation": # scale, encoder bias, decoder bias
+            self.encoder_bias.requires_grad = True
+            
+            self.decoder.requires_grad = False
+            self.decoder_bias.requires_grad = True
             self.scale.requires_grad = True
     
     def parameters(self):

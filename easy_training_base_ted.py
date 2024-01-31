@@ -240,17 +240,6 @@ wandb.init(project="sparse coding", config=dict(cfg), name=wandb_run_name)
 
 
 def compute_activations(model, inputs, layer_name):
-    # acts = []
-    # for tokens in inputs:
-    #     with torch.no_grad(): # As long as not doing KL divergence, don't need gradients for model
-    #         with Trace(model, layer_name) as ret:
-    #             _ = model(tokens)
-    #             representation = ret.output
-    #             if(isinstance(representation, tuple)):
-    #                 representation = representation[0]
-    #     layer_activations = rearrange(representation, "b seq d_model -> (b seq) d_model")
-    #     acts.append(layer_activations.cpu())
-    # return acts
 
     acts = []
     for tokens in inputs:
@@ -329,9 +318,7 @@ def training_step(autoencoder, base_activation, target_activation, transfer_auto
         reconstruction_loss = (x_hat - target_activation.to(cfg.device)).pow(2).mean()
         total_loss = reconstruction_loss # NO L1 LOSS
 
-        if (i % log_every == 0): # Check here so first check is model w/o change
-            # self_similarity = torch.cosine_similarity(tsae.decoder, last_decoders[mode], dim=-1).mean().cpu().item()
-            # last_decoders[mode] = tsae.decoder.clone().detach()
+        if (i % log_every == 0): 
             num_tokens_so_far = i*cfg.max_length*cfg.model_batch_size
             with torch.no_grad():
                 sparsity = (cmode != 0).float().mean(dim=0).sum().cpu().item()
@@ -424,27 +411,7 @@ for i, batch in enumerate(tqdm(token_loader,total=int(max_num_tokens/(cfg.max_le
         wandb.log(wandb_log)
         pass
         
-    i+=1
-    
-    # if ((i+2) % 1000==0): # save periodically but before big changes
-    #     for layer in range(len(cfg.layers)):
-    #         for l1_id in range(len(cfg.l1_alphas)):
-    #             for m in range(len(modes)):
-    #                 l1_alpha = cfg.l1_alphas[l1_id]
-    #                 mode = modes[m]
-    #                 model_save_name = cfg.model_name.split("/")[-1]
-    #                 save_name = f"base_autoTED_70m_{mode}_{layer}_{l1_alpha}_ckpt{num_saved_so_far}" 
-
-    #                 # Make directory trained_models if it doesn't exist
-    #                 import os
-    #                 if not os.path.exists("trained_models"):
-    #                     os.makedirs("trained_models")
-    #                 # Save model
-    #                 torch.save(transfer_autoencoders[layer][l1_id][m], f"trained_models/base_autoTED_70m/{save_name}.pt")
-    #                 torch.save(dead_features[layer][l1_id], f"trained_models/base_dead_features_70m/base_dead_features_70m_{layer}_{l1_alpha}.pt")
-    #                 torch.save(frequency[layer][l1_id], f"trained_models/base_frequency_70m/base_frequency_70m_{layer}_{l1_alpha}.pt")
-    #     num_saved_so_far += 1
-                
+    i+=1            
     
     num_tokens_so_far = i*cfg.max_length*cfg.model_batch_size
     if(num_tokens_so_far > max_num_tokens):

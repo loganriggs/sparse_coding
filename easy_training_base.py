@@ -26,10 +26,11 @@ cfg.setting="residual"
 cfg.tensor_name="gpt_neox.layers.{layer}"
 original_l1_alpha = 8e-4
 # cfg.l1_alpha=original_l1_alpha
-cfg.l1_alphas=[0, 1e-5, 2e-5, 4e-5, 8e-5, 1e-4, 2e-4, 4e-4, 8e-4, 1e-3, 2e-3, 4e-3, 8e-3]
+# cfg.l1_alphas=[0, 1e-5, 2e-5, 4e-5, 8e-5, 1e-4, 2e-4, 4e-4, 8e-4, 1e-3, 2e-3, 4e-3, 8e-3]
+cfg.l1_alphas=[2e-3,]
 cfg.sparsity=None
 cfg.num_epochs=10
-cfg.model_batch_size=128
+cfg.model_batch_size=8 * 8
 cfg.lr=1e-3
 cfg.kl=False
 cfg.reconstruction=False
@@ -114,14 +115,17 @@ for layer in cfg.layers:
         params["shift_bias"] = torch.empty((activation_size,), device=cfg.device)
         nn.init.zeros_(params["shift_bias"])
 
-        autoencoder = AnthropicSAE(  # TiedSAE, UntiedSAE, AnthropicSAE
-            # n_feats = n_dict_components, 
-            # activation_size=activation_size,
-            encoder=params["encoder"],
-            encoder_bias=params["encoder_bias"],
-            decoder=params["decoder"],
-            shift_bias=params["shift_bias"],
-        )
+        # autoencoder = AnthropicSAE(  # TiedSAE, UntiedSAE, AnthropicSAE
+        #     # n_feats = n_dict_components, 
+        #     # activation_size=activation_size,
+        #     encoder=params["encoder"],
+        #     encoder_bias=params["encoder_bias"],
+        #     decoder=params["decoder"],
+        #     shift_bias=params["shift_bias"],
+        # )
+        
+        autoencoder = torch.load(f"/root/sparse_coding/trained_models/base_sae_70m/base_sae_70m_{layer}_{l1}.pt")
+        
         autoencoder.to_device(cfg.device)
         autoencoder.set_grad()
         l1_variants.append(autoencoder)
@@ -386,7 +390,7 @@ for layer in range(len(cfg.layers)):
         autoencoder = autoencoders[layer][l1]
         model_save_name = cfg.model_name.split("/")[-1]
         save_name = f"base_sae_70m_{layer}_{l1_alpha}"
-        torch.save(autoencoder, f"trained_models/{save_name}.pt")
+        torch.save(autoencoder, f"trained_models/base_retrain_70m/{save_name}.pt")
 
 
 # In[ ]:

@@ -170,7 +170,7 @@ class TransferSAE(LearnedDict):
         "bias" (restrict bias shift),
         "free" (train everything), 
         """
-        assert mode in ["dnoscale", "dnorotation", "dnobias", "dfree", "scale", "enorotation", "efree", "norotation"], "mode not of right type"  # represents what gets frozen
+        assert mode in ["baseline", "dnoscale", "dnorotation", "dnobias", "dfree", "scale", "enorotation", "efree", "norotation"], "mode not of right type"  # represents what gets frozen
         self.mode = mode
         self.encoder = autoencoder.encoder.detach().clone()
         self.encoder_bias = autoencoder.encoder_bias.detach().clone()
@@ -212,6 +212,12 @@ class TransferSAE(LearnedDict):
         self.decoder.requires_grad = True
         self.decoder_bias.requires_grad = True
         self.scale.requires_grad = True
+        
+        if self.mode=="baseline":
+            self.encoder.requires_grad = True
+            self.encoder_bias.requires_grad = True
+            self.shift_bias.requires_grad = True
+            self.scale.requires_grad = False
 
         if self.mode=="dnoscale":
             self.scale.requires_grad = False

@@ -24,14 +24,14 @@ cfg.setting="residual"
 # cfg.tensor_name="gpt_neox.layers.{layer}"
 cfg.tensor_name="gpt_neox.layers.{layer}" # "gpt_neox.layers.{layer}" (pythia), "transformer.h.{layer}" (rm)
 cfg.target_tensor_name="gpt_neox.layers.{layer}"
-original_l1_alpha = 8e-4
-cfg.l1_alpha=original_l1_alpha
-cfg.l1_alphas=[1e-3, 2e-3, 4e-3, 8e-3]
+# original_l1_alpha = 8e-4
+# cfg.l1_alpha=original_l1_alpha
+cfg.l1_alphas=[2e-3,]
 # cfg.l1_alphas=[0, 1e-5, 1e-4, 2e-4, 4e-4, 8e-4, 1e-3, 2e-3, 4e-3, 8e-3]
 cfg.sparsity=None
 cfg.num_epochs=10
 cfg.model_batch_size=8 * 8
-cfg.lr=1e-2
+cfg.lr=1e-3
 cfg.kl=False
 cfg.reconstruction=False
 # cfg.dataset_name="NeelNanda/pile-10k"
@@ -40,6 +40,7 @@ cfg.device="cuda:0"
 cfg.ratio = 4
 cfg.seed = 0
 cfg.max_length = 256
+cfg.frequency_threshold = -1 # 1e-2 # Delete features with freq lower than this. Put 0 for filtering dead features, -1 or None for no filtering
 # cfg.device="cpu"
 
 
@@ -123,7 +124,8 @@ adjustment_factor = 0.1  # You can set this to whatever you like
 
 def autoencoder_name_from_llm_name(llm_name, layer, l1_alpha):
     # model_save_name = llm_name.split("/")[-1]
-    return f"base_sae_70m/base_sae_70m_{layer}_{l1_alpha}"
+    # return f"base_sae_70m/base_sae_70m_{layer}_{l1_alpha}"
+    return f"checkpoint5/base_sae_70m_{layer}_{l1_alpha}"
     # return f"{model_save_name}_{layer}_{l1_alpha}"
 
 
@@ -135,13 +137,16 @@ from autoencoders.learned_dict import TiedSAE, UntiedSAE, AnthropicSAE, Transfer
 from torch import nn
 
 model_save_name = cfg.model_name.split("/")[-1]
-print(f"Loading autoencoder from model {model_save_name}")
+print(f"Loading autoencoders from model {model_save_name}")
 
 
 
 autoencoders = []
+filterings = []
+
 for layer in cfg.layers:
     l1_variants = []
+    l1_freq = []
     
     for l1 in cfg.l1_alphas:
         save_name = autoencoder_name_from_llm_name(cfg.model_name, layer, l1)
@@ -149,7 +154,19 @@ for layer in cfg.layers:
         autoencoder.to_device(cfg.device)
         l1_variants.append(autoencoder)
         
+        try:
+            f = torch.load(f"trained_models/base_frequency_70m/base_frequency_70m_{layer}_{l1}.pt")
+        except FileNotFoundError:
+            f = torch.ones_like(autoencoder.encoder_bias)
+        if cfg.frequency_threshold is None:
+            f = f >= 0
+        else:
+            f = f > cfg.frequency_threshold
+        f.to(cfg.device)
+        l1_freq.append(f)
+        
     autoencoders.append(l1_variants)
+    filterings.append(l1_freq)
 
 
 # In[ ]:
@@ -159,38 +176,11 @@ for layer in cfg.layers:
 # from autoencoders.learned_dict import TiedSAE, UntiedSAE, AnthropicSAE, TransferSAE
 # from torch import nn
 
-# transfer_autoencoders = []
-# optimizers = []
-# for layer in cfg.layers:
-#     l1_variants = []
-#     l1_optimizers = []
-    
-#     for l1 in range(len(cfg.l1_alphas)):
-#         autoencoder = autoencoders[layer][l1]
-        
-#         mode_tsae = TransferSAE(
-#             # n_feats = n_dict_components, 
-#             # activation_size=activation_size,
-#             autoencoder,
-#             decoder=autoencoder.get_learned_dict().detach().clone(),
-#             decoder_bias=autoencoder.shift_bias.detach().clone(),
-#             mode="free",
-#         )
-#         mode_tsae.set_grad()
-        
-#         l1_variants.append(mode_tsae)
-#         l1_optimizers.append(
-#             torch.optim.Adam(mode_tsae.parameters(), lr=cfg.lr)
-#         )
-#     transfer_autoencoders.append(l1_variants)
-#     optimizers.append(l1_optimizers)
-
-# Initialize New transfer autoencoders
 from autoencoders.learned_dict import TiedSAE, UntiedSAE, AnthropicSAE, TransferSAE
 from torch import nn
 
 # modes = ["scale", "rotation", "bias", "free"]
-modes = ["scale", "enorotation", "efree"]
+modes = ["baseline", "dnorotation", "dfree", "scale", "enorotation", "efree", "norotation"]
 transfer_autoencoders = []
 optimizers = []
 for layer in cfg.layers:
@@ -209,7 +199,7 @@ for layer in cfg.layers:
                 autoencoder,
                 decoder=autoencoder.get_learned_dict().detach().clone(),
                 decoder_bias=autoencoder.shift_bias.detach().clone(),
-                scale=None, #autoencoder.scale.detach().clone(),
+                scale=None,
                 mode=mode,
             )
             mode_tsae.set_grad()
@@ -222,6 +212,12 @@ for layer in cfg.layers:
         l1_optimizers.append(mode_opts)
     transfer_autoencoders.append(l1_variants)
     optimizers.append(l1_optimizers)
+
+
+# In[ ]:
+
+
+# If we're filtering out the low activating features:
 
 
 # In[ ]:
@@ -240,7 +236,6 @@ wandb.init(project="sparse coding", config=dict(cfg), name=wandb_run_name)
 
 
 def compute_activations(model, inputs, layer_name):
-
     acts = []
     for tokens in inputs:
         with torch.no_grad(): # As long as not doing KL divergence, don't need gradients for model
@@ -282,14 +277,16 @@ def generate_activations(model, token_loader, cfg, model_on_gpu=True, num_batche
 # In[ ]:
 
 
-def training_step(autoencoder, base_activation, target_activation, transfer_autoencoders, optimizers, step_number, log_every=100, log_prefix="", indiv_prefixes = ""):
+def training_step(autoencoder, base_activation, target_activation, transfer_autoencoders, optimizers, filter, step_number, log_every=100, log_prefix="", indiv_prefixes = ""):
     i = step_number
-    c = autoencoder.encode(base_activation.to(cfg.device))
-    x_hat = autoencoder.decode(c)
+    
+    with torch.no_grad():
+        c = autoencoder.encode(base_activation.to(cfg.device)) * filter
+        x_hat = autoencoder.decode(c)
     
     sae_dead_features = c.sum(dim=0).cpu().detach()
     
-    autoencoder_loss = (x_hat - target_activation.to(cfg.device)).pow(2).mean()
+    autoencoder_loss = (x_hat - target_activation.to(cfg.device)).pow(2).mean().detach().clone()
     dead_features = []
     binary_acts = []
     
@@ -303,22 +300,28 @@ def training_step(autoencoder, base_activation, target_activation, transfer_auto
         indiv_prefixes = [indiv_prefixes for i in range(len(transfer_autoencoders))]
     
     for tsae, optimizer, indiv_prefix in zip(transfer_autoencoders, optimizers, indiv_prefixes):
-        if tsae.mode[:1]=='e':
-            cmode = tsae.encode(base_activation.to(cfg.device))
+        if tsae.mode[:1]=='d':
+            cmode = c.clone().detach()
             x_hat = tsae.decode(cmode)
         else:
-            cmode = c
+            cmode = tsae.encode(base_activation.to(cfg.device)) * filter
             x_hat = tsae.decode(cmode)
             
         indiv_prefix = tsae.mode+" "
             
-        dead_features.append(cmode.sum(dim=0).cpu().detach())
-        binary_acts.append((cmode!=0).sum(dim=0).cpu().detach())
+        dead_features.append(cmode.sum(dim=0).cpu().detach().clone())
+        binary_acts.append((cmode!=0).sum(dim=0).cpu().detach().clone())
         
         reconstruction_loss = (x_hat - target_activation.to(cfg.device)).pow(2).mean()
         total_loss = reconstruction_loss # NO L1 LOSS
+        
+        if tsae.mode=='baseline':
+            l1_loss = torch.norm(cmode, 1, dim=-1).mean()
+            total_loss = total_loss + (2e-3) * l1_loss
 
-        if (i % log_every == 0): 
+        if (i % log_every == 0): # Check here so first check is model w/o change
+            # self_similarity = torch.cosine_similarity(tsae.decoder, last_decoders[mode], dim=-1).mean().cpu().item()
+            # last_decoders[mode] = tsae.decoder.clone().detach()
             num_tokens_so_far = i*cfg.max_length*cfg.model_batch_size
             with torch.no_grad():
                 sparsity = (cmode != 0).float().mean(dim=0).sum().cpu().item()
@@ -370,7 +373,7 @@ frequency = [[[torch.zeros(autoencoder.encoder.shape[0])
 # auto_dead_features = torch.zeros(autoencoder.encoder.shape[0])
 
 max_num_tokens = 100_000_000
-log_every=100
+log_every=1
 # Freeze model parameters 
 model = model.to(cfg.device)
 model.eval()
@@ -400,8 +403,8 @@ for i, batch in enumerate(tqdm(token_loader,total=int(max_num_tokens/(cfg.max_le
     for layer in range(len(cfg.layers)):
         for l1_id in range(len(cfg.l1_alphas)):
             wandb_logging, l1_acts , binary_acts = training_step(autoencoders[layer][l1_id], layer_activations[layer], layer_activations[layer], 
-                                                                        transfer_autoencoders[layer][l1_id], optimizers[layer][l1_id], i, 
-                                                                        log_every, log_prefix=f"{layer} {cfg.l1_alphas[l1_id]} ")
+                                                                        transfer_autoencoders[layer][l1_id], optimizers[layer][l1_id], filterings[layer][l1_id],
+                                                                        i, log_every, log_prefix=f"{layer} {cfg.l1_alphas[l1_id]} ")
             for mode_id in range(len(modes)):
                 dead_features[layer][l1_id][mode_id] += l1_acts[mode_id]
                 frequency[layer][l1_id][mode_id] += binary_acts[mode_id]
@@ -411,7 +414,27 @@ for i, batch in enumerate(tqdm(token_loader,total=int(max_num_tokens/(cfg.max_le
         wandb.log(wandb_log)
         pass
         
-    i+=1            
+    i+=1
+    
+    # if ((i+2) % 1000==0): # save periodically but before big changes
+    #     for layer in range(len(cfg.layers)):
+    #         for l1_id in range(len(cfg.l1_alphas)):
+    #             for m in range(len(modes)):
+    #                 l1_alpha = cfg.l1_alphas[l1_id]
+    #                 mode = modes[m]
+    #                 model_save_name = cfg.model_name.split("/")[-1]
+    #                 save_name = f"base_autoTED_70m_{mode}_{layer}_{l1_alpha}_ckpt{num_saved_so_far}" 
+
+    #                 # Make directory trained_models if it doesn't exist
+    #                 import os
+    #                 if not os.path.exists("trained_models"):
+    #                     os.makedirs("trained_models")
+    #                 # Save model
+    #                 torch.save(transfer_autoencoders[layer][l1_id][m], f"trained_models/base_autoTED_70m/{save_name}.pt")
+    #                 torch.save(dead_features[layer][l1_id], f"trained_models/base_dead_features_70m/base_dead_features_70m_{layer}_{l1_alpha}.pt")
+    #                 torch.save(frequency[layer][l1_id], f"trained_models/base_frequency_70m/base_frequency_70m_{layer}_{l1_alpha}.pt")
+    #     num_saved_so_far += 1
+                
     
     num_tokens_so_far = i*cfg.max_length*cfg.model_batch_size
     if(num_tokens_so_far > max_num_tokens):

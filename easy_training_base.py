@@ -27,17 +27,18 @@ cfg.tensor_name="gpt_neox.layers.{layer}"
 original_l1_alpha = 8e-4
 # cfg.l1_alpha=original_l1_alpha
 # cfg.l1_alphas=[0, 1e-5, 2e-5, 4e-5, 8e-5, 1e-4, 2e-4, 4e-4, 8e-4, 1e-3, 2e-3, 4e-3, 8e-3]
-cfg.l1_alphas=[2e-3,]
+cfg.l1_alphas=[2e-3]
 cfg.sparsity=None
 cfg.num_epochs=10
-cfg.model_batch_size=8 * 8
+cfg.model_batch_size= 8 * 8
+cfg.sub_batch_size=8 * 8
 cfg.lr=1e-3
 cfg.kl=False
 cfg.reconstruction=False
 # cfg.dataset_name="NeelNanda/pile-10k"
 cfg.dataset_name="Elriggs/openwebtext-100k"
 cfg.device="cuda:0"
-cfg.ratio = 4
+cfg.ratio = 32
 cfg.seed = 0
 # cfg.device="cpu"
 
@@ -115,16 +116,16 @@ for layer in cfg.layers:
         params["shift_bias"] = torch.empty((activation_size,), device=cfg.device)
         nn.init.zeros_(params["shift_bias"])
 
-        autoencoder = AnthropicSAE(  # TiedSAE, UntiedSAE, AnthropicSAE
-            # n_feats = n_dict_components, 
-            # activation_size=activation_size,
-            encoder=params["encoder"],
-            encoder_bias=params["encoder_bias"],
-            decoder=params["decoder"],
-            shift_bias=params["shift_bias"],
-        )
+        # autoencoder = AnthropicSAE(  # TiedSAE, UntiedSAE, AnthropicSAE
+        #     # n_feats = n_dict_components, 
+        #     # activation_size=activation_size,
+        #     encoder=params["encoder"],
+        #     encoder_bias=params["encoder_bias"],
+        #     decoder=params["decoder"],
+        #     shift_bias=params["shift_bias"],
+        # )
         
-        # autoencoder = torch.load(f"/root/sparse_coding/trained_models/base_sae_70m/base_sae_70m_{layer}_{l1}.pt")
+        autoencoder = torch.load(f"/root/sparse_coding/trained_models/checkpoint5/base_sae_70m_32_{layer}_{l1}.pt")
         
         autoencoder.to_device(cfg.device)
         autoencoder.set_grad()
@@ -177,7 +178,7 @@ wandb.init(project="sparse coding", config=dict(cfg), name=wandb_run_name)
 # In[ ]:
 
 
-# time_since_activation = torch.zeros(autoencoder.encoder.shape[0])
+time_since_activation = torch.zeros((len(cfg.layers), len(cfg.l1_alphas), autoencoder.encoder.shape[0]))
 # total_activations = torch.zeros(autoencoder.encoder.shape[0])
 max_num_tokens = 100_000_000
 save_every = 30_000
@@ -192,17 +193,37 @@ for epoch in range(cfg.num_epochs):
     for i_inside, batch in enumerate(tqdm(token_loader,total=max(int(max_num_tokens/(cfg.max_length*cfg.model_batch_size)), len(token_loader)))):
         i+=1
         tokens = batch["input_ids"].to(cfg.device)
-        with torch.no_grad(): # As long as not doing KL divergence, don't need gradients for model
-                    
-            layer_activations = []
-            with TraceDict(model, tensor_names) as ret:
-                _ = model(tokens)
-                for layer_name in tensor_names:
-                    representation = ret[layer_name].output[0]
-                    flattened_rep = rearrange(representation, "b seq d_model -> (b seq) d_model")
-                    layer_activations.append(flattened_rep)
                     
         # activation_saver.save_batch(layer_activations.clone().cpu().detach())
+        
+        sub_batch_size = cfg.sub_batch_size
+        num_sub_batches = tokens.size(0) // sub_batch_size + (0 if tokens.size(0) % sub_batch_size == 0 else 1)
+
+        with torch.no_grad():
+            # Initialize a list to hold all layer activations for the entire batch
+            layer_activations = [[] for _ in range(len(tensor_names))]
+            
+            for sub_batch_idx in range(num_sub_batches):
+                # Split the tokens into sub-batches
+                start_idx = sub_batch_idx * sub_batch_size
+                end_idx = min((sub_batch_idx + 1) * sub_batch_size, tokens.size(0))
+                sub_batch_tokens = tokens[start_idx:end_idx]
+
+                sub_layer_activations = []
+                with TraceDict(model, tensor_names) as ret:
+                    _ = model(sub_batch_tokens)
+                    for layer_idx, layer_name in enumerate(tensor_names):
+                        representation = ret[layer_name].output[0]
+                        flattened_rep = rearrange(representation, "b seq d_model -> (b seq) d_model")
+                        sub_layer_activations.append(flattened_rep)
+                
+                # For each layer, concatenate the sub-batch activations with the previous sub-batches
+                for layer_idx, activations in enumerate(sub_layer_activations):
+                    if sub_batch_idx == 0:
+                        layer_activations[layer_idx] = activations
+                    else:
+                        layer_activations[layer_idx] = torch.cat((layer_activations[layer_idx], activations), dim=0)
+                        
         
         wandb_log = {}
         
@@ -220,23 +241,19 @@ for epoch in range(cfg.num_epochs):
                 l1_loss = torch.norm(c, 1, dim=-1).mean()
                 total_loss = reconstruction_loss + l1_alpha*l1_loss
 
-                # time_since_activation += 1
-                # time_since_activation = time_since_activation * (c.sum(dim=0).cpu()==0)
+                time_since_activation[layer, l1, :] += 1
+                time_since_activation[layer, l1, :] = time_since_activation[layer, l1, :] * (c.sum(dim=0).cpu()==0).detach()
                 # total_activations += c.sum(dim=0).cpu()
                 if ((i) % 10 == 0): # Check here so first check is model w/o change
-                    # self_similarity = torch.cosine_similarity(c, last_encoder, dim=-1).mean().cpu().item()
-                    # Above is wrong, should be similarity between encoder and last encoder
-                    # self_similarity = torch.cosine_similarity(autoencoder.encoder, last_encoder, dim=-1).mean().cpu().item()
-                    # last_encoder = autoencoder.encoder.clone().detach()
                     num_tokens_so_far = i*cfg.max_length*cfg.model_batch_size
                     with torch.no_grad():
                         sparsity = (c != 0).float().mean(dim=0).sum().cpu().item()
                         # Count number of dead_features are zero
-                        # num_dead_features = (time_since_activation >= min(i, 200)).sum().item()
+                        num_dead_features = (time_since_activation[layer, l1, :] >= min(i, 200)).sum().item()
                     # print(f"Sparsity: {sparsity:.1f} | Dead Features: {num_dead_features} | Total Loss: {total_loss:.2f} | Reconstruction Loss: {reconstruction_loss:.2f} | L1 Loss: {cfg.l1_alpha*l1_loss:.2f} | l1_alpha: {cfg.l1_alpha:.2e} | Tokens: {num_tokens_so_far} | Self Similarity: {self_similarity:.2f}")
                     wandb_log.update({
                         f'Sparsity {layer}, {l1_alpha}': sparsity,
-                        # 'Dead Features': num_dead_features,
+                        f'Dead Features {layer}, {l1_alpha}': num_dead_features,
                         f'Total Loss {layer}, {l1_alpha}': total_loss.item(),
                         f'Reconstruction Loss {layer}, {l1_alpha}': reconstruction_loss.item(),
                         f'L1 Loss {layer}, {l1_alpha}': (l1_alpha*l1_loss).item(),
@@ -260,9 +277,10 @@ for epoch in range(cfg.num_epochs):
         
     # SAVE SAEs each epoch
     print(f"SAVED SAEs for EPOCH {epoch}")
+    eff_ep = epoch+6
     import os
-    if not os.path.exists(f"trained_models/checkpoint{epoch}"):
-        os.makedirs(f"trained_models/checkpoint{epoch}")
+    if not os.path.exists(f"trained_models/checkpoint{eff_ep}"):
+        os.makedirs(f"trained_models/checkpoint{eff_ep}")
     # Save model
 
     for layer in range(len(cfg.layers)):
@@ -271,8 +289,8 @@ for epoch in range(cfg.num_epochs):
             
             autoencoder = autoencoders[layer][l1]
             model_save_name = cfg.model_name.split("/")[-1]
-            save_name = f"base_sae_70m_{layer}_{l1_alpha}"
-            torch.save(autoencoder, f"trained_models/checkpoint{epoch}/{save_name}.pt")
+            save_name = f"base_sae_70m_{cfg.ratio}_{layer}_{l1_alpha}"
+            torch.save(autoencoder, f"trained_models/checkpoint{eff_ep}/{save_name}.pt")
 
 
 # In[ ]:
@@ -293,7 +311,7 @@ for layer in range(len(cfg.layers)):
         
         autoencoder = autoencoders[layer][l1]
         model_save_name = cfg.model_name.split("/")[-1]
-        save_name = f"base_sae_70m_{layer}_{l1_alpha}"
+        save_name = f"base_sae_70m_{cfg.ratio}_{layer}_{l1_alpha}"
         torch.save(autoencoder, f"trained_models/base_sae_70m/{save_name}.pt")
 
 

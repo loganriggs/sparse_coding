@@ -37,7 +37,7 @@ cfg.reconstruction=False
 # cfg.dataset_name="NeelNanda/pile-10k"
 cfg.dataset_name="Elriggs/openwebtext-100k"
 cfg.device="cuda:0"
-cfg.ratio = 4
+cfg.ratio = 32
 cfg.seed = 0
 cfg.max_length = 256
 cfg.frequency_threshold = -1 # 1e-2 # Delete features with freq lower than this. Put 0 for filtering dead features, -1 or None for no filtering
@@ -125,7 +125,7 @@ adjustment_factor = 0.1  # You can set this to whatever you like
 def autoencoder_name_from_llm_name(llm_name, layer, l1_alpha):
     # model_save_name = llm_name.split("/")[-1]
     # return f"base_sae_70m/base_sae_70m_{layer}_{l1_alpha}"
-    return f"checkpoint5/base_sae_70m_{layer}_{l1_alpha}"
+    return f"checkpoint5/base_sae_70m_{cfg.ratio}_{layer}_{l1_alpha}"
     # return f"{model_save_name}_{layer}_{l1_alpha}"
 
 
@@ -458,7 +458,7 @@ for layer in range(len(cfg.layers)):
             l1_alpha = cfg.l1_alphas[l1_id]
             mode = modes[m]
             model_save_name = cfg.model_name.split("/")[-1]
-            save_name = f"base_autoTED_70m_{mode}_{layer}_{l1_alpha}" 
+            save_name = f"base_autoTED_70m_{cfg.ratio}_{mode}_{layer}_{l1_alpha}" 
 
             # Make directory trained_models if it doesn't exist
             import os
@@ -467,8 +467,8 @@ for layer in range(len(cfg.layers)):
             # Save model
             torch.save(transfer_autoencoders[layer][l1_id][m], f"trained_models/base_autoTED_70m/{save_name}.pt")
             
-            torch.save(dead_features[layer][l1_id][m], f"trained_models/base_dead_features_70m/base_dead_features_70m_{mode}_{layer}_{l1_alpha}.pt")
-            torch.save(frequency[layer][l1_id][m], f"trained_models/base_frequency_70m/base_frequency_70m_{mode}_{layer}_{l1_alpha}.pt")
+            torch.save(dead_features[layer][l1_id][m], f"trained_models/base_dead_features_70m/base_dead_features_70m_{cfg.ratio}_{mode}_{layer}_{l1_alpha}.pt")
+            torch.save(frequency[layer][l1_id][m], f"trained_models/base_frequency_70m/base_frequency_70m_{cfg.ratio}_{mode}_{layer}_{l1_alpha}.pt")
 
 num_saved_so_far += 1
 
